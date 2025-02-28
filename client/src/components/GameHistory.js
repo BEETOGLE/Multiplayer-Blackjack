@@ -166,7 +166,7 @@ const getResultLabel = (result) => {
 };
 
 const GameHistory = () => {
-  const { gameHistory } = useGame();
+  const { gameHistory = [] } = useGame();
   
   return (
     <HistoryContainer>
@@ -175,7 +175,7 @@ const GameHistory = () => {
       </HistoryHeader>
       
       <HistoryList>
-        {gameHistory.length > 0 ? (
+        {gameHistory && gameHistory.length > 0 ? (
           gameHistory.map((round, index) => (
             <HistoryItem key={index}>
               <RoundHeader>
@@ -184,7 +184,7 @@ const GameHistory = () => {
               </RoundHeader>
               
               <ResultGrid>
-                {round.results.map((result, playerIndex) => (
+                {round.results && round.results.map((result, playerIndex) => (
                   <PlayerResult 
                     key={playerIndex} 
                     result={result.outcome}

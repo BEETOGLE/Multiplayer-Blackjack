@@ -19,6 +19,7 @@ export const GameProvider = ({ children }) => {
   const [currentTurn, setCurrentTurn] = useState(null);
   const [messages, setMessages] = useState([]);
   const [error, setError] = useState(null);
+  const [gameHistory, setGameHistory] = useState([]);
   const [leaderboard, setLeaderboard] = useState([]);
   const navigate = useNavigate();
 
@@ -191,6 +192,18 @@ export const GameProvider = ({ children }) => {
       const currentPlayer = data.players && data.players.find(p => p.id === socket.id);
       if (currentPlayer) {
         setBalance(currentPlayer.balance);
+      }
+      
+      // Update game history
+      if (data.result) {
+        setGameHistory(prev => [
+          {
+            ...data.result,
+            timestamp: Date.now(),
+            roundNumber: prev.length + 1
+          },
+          ...prev
+        ].slice(0, 10)); // Keep only the last 10 rounds
       }
       
       // Add system message
@@ -418,6 +431,7 @@ export const GameProvider = ({ children }) => {
         currentTurn,
         messages,
         error,
+        gameHistory,
         leaderboard,
         createRoom,
         joinRoom,
