@@ -137,8 +137,6 @@ const BettingPanel = ({ onBetComplete, playerBalance }) => {
   const [selectedChip, setSelectedChip] = useState(null);
   const [betPlaced, setBetPlaced] = useState(false);
   
-  const chipValues = [5, 10, 25, 50, 100];
-  
   const handleChipClick = (value) => {
     if (playerBalance < value || playerBalance < currentBet + value) return;
     

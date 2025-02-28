@@ -104,8 +104,6 @@ const PlayerControls = ({ currentPlayer, canSplit }) => {
     surrender, 
     startNewRound, 
     gameState, 
-    currentTurn, 
-    socket,
     isPlayerTurn
   } = useGame();
   

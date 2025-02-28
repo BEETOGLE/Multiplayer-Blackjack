@@ -19,7 +19,6 @@ export const GameProvider = ({ children }) => {
   const [currentTurn, setCurrentTurn] = useState(null);
   const [messages, setMessages] = useState([]);
   const [error, setError] = useState(null);
-  const [gameHistory, setGameHistory] = useState([]);
   const [leaderboard, setLeaderboard] = useState([]);
   const navigate = useNavigate();
 
@@ -419,7 +418,6 @@ export const GameProvider = ({ children }) => {
         currentTurn,
         messages,
         error,
-        gameHistory,
         leaderboard,
         createRoom,
         joinRoom,

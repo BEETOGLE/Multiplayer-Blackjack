@@ -105,7 +105,6 @@ const JoinRoom = () => {
   const [username, setUsername] = useState('');
   const [roomCode, setRoomCode] = useState('');
   const [localError, setLocalError] = useState(null);
-  const navigate = useNavigate();
   const { createRoom, joinRoom, error } = useGame();
   
   const handleCreateRoom = (e) => {
