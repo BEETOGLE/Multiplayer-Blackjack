@@ -172,19 +172,13 @@ const PlaceBetButton = styled(Button)`
 `;
 
 const ClearButton = styled(Button)`
-  background-color: #f44336;
+  background-color: #2196f3;
   color: white;
 `;
 
 const RepeatBetButton = styled(Button)`
   background-color: #2196f3;
   color: white;
-`;
-
-const AllInButton = styled(Button)`
-  background-color: #ff9800;
-  color: white;
-  font-weight: bold;
 `;
 
 const BettingPanel = ({ onBetComplete, playerBalance }) => {
@@ -227,11 +221,6 @@ const BettingPanel = ({ onBetComplete, playerBalance }) => {
     if (onBetComplete && typeof onBetComplete === 'function') {
       onBetComplete();
     }
-  };
-  
-  const handleAllIn = () => {
-    setCurrentBet(playerBalance);
-    setSelectedChip(null);
   };
   
   const handleCustomBetChange = (e) => {
@@ -330,7 +319,7 @@ const BettingPanel = ({ onBetComplete, playerBalance }) => {
           $100
         </PurpleChip>
         <GoldChip 
-          onClick={handleAllIn}
+          onClick={() => handleChipClick(playerBalance)}
           selected={currentBet === playerBalance}
           disabled={playerBalance <= 0}
         >

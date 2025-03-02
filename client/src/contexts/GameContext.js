@@ -325,7 +325,7 @@ export const GameProvider = ({ children }) => {
       socket.off('player_split');
       socket.off('player_spectating');
     };
-  }, [socket, autoSkipNewRound, players]);
+  }, [socket, autoSkipNewRound, players, startNewRound]);
   
   // Game actions
   const createRoom = (username, initialBalance = 1000) => {
