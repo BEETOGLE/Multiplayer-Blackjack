@@ -885,7 +885,7 @@ function dealerTurn(roomId) {
   
   // Set dealer status
   if (rooms[roomId].dealer.score > 21) {
-    rooms[roomId].dealer.status = 'bust';
+    rooms[roomId].dealer.status = 'busted';
   } else if (isBlackjack(rooms[roomId].dealer.cards)) {
     rooms[roomId].dealer.status = 'blackjack';
   } else {
@@ -937,7 +937,7 @@ function settleGame(roomId) {
         amountChange = Math.floor(player.bet * 1.5);
         player.balance += player.bet + amountChange;
       }
-    } else if (player.status === 'bust') {
+    } else if (player.status === 'busted') {
       outcome = 'bust';
       amountChange = -player.bet;
       // Balance already deducted when betting
@@ -949,7 +949,7 @@ function settleGame(roomId) {
       outcome = 'lose';
       amountChange = -player.bet;
       // Balance already deducted when betting
-    } else if (dealer.status === 'bust') {
+    } else if (dealer.status === 'busted') {
       outcome = 'win';
       amountChange = player.bet;
       player.balance += player.bet * 2; // Original bet + winnings

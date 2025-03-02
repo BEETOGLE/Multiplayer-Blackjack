@@ -125,6 +125,7 @@ const ResultLabel = styled.div`
     if (props.result === 'lose') return '#f44336';
     if (props.result === 'push') return '#ff9800';
     if (props.result === 'blackjack') return '#e2b714';
+    if (props.result === 'bust') return '#f44336';
     return '#f5f5f5';
   }};
 `;
@@ -160,6 +161,8 @@ const getResultLabel = (result) => {
       return 'PUSH';
     case 'blackjack':
       return 'BLACKJACK';
+    case 'bust':
+      return 'BUST';
     default:
       return '';
   }
