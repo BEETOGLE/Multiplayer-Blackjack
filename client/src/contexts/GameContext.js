@@ -21,11 +21,35 @@ export const GameProvider = ({ children }) => {
   const [error, setError] = useState(null);
   const [gameHistory, setGameHistory] = useState([]);
   const [leaderboard, setLeaderboard] = useState([]);
+  const [lastBet, setLastBet] = useState(0);
+  const [hintsEnabled, setHintsEnabled] = useState(true);
+  const [autoSkipNewRound, setAutoSkipNewRound] = useState(true);
   const navigate = useNavigate();
 
   // Helper function to add messages to the chat
   const addMessage = (message) => {
     setMessages(prevMessages => [...prevMessages, message]);
+  };
+
+  // Define startNewRound function before it's used in useEffect
+  const startNewRound = () => {
+    if (!connected) {
+      console.error("Cannot start new round: Not connected to server");
+      return;
+    }
+    
+    if (!roomId) {
+      console.error("Cannot start new round: No room ID");
+      return;
+    }
+    
+    if (!socket) {
+      console.error("Cannot start new round: Socket not initialized");
+      return;
+    }
+    
+    console.log(`Emitting new_round event for room ${roomId}`);
+    socket.emit('new_round', { roomId });
   };
 
   // Connect to socket server
@@ -183,49 +207,64 @@ export const GameProvider = ({ children }) => {
     });
     
     socket.on('game_ended', (data) => {
+      if (!data) return;
       setGameState('ended');
-      setDealer(data.dealer);
+      setDealer(data.dealer || { cards: [], score: 0 });
       setPlayers(data.players || []);
       setCurrentTurn(null);
       
-      // Update the player's balance
-      const currentPlayer = data.players && data.players.find(p => p.id === socket.id);
-      if (currentPlayer) {
-        setBalance(currentPlayer.balance);
-      }
-      
       // Update game history
-      if (data.result) {
-        setGameHistory(prev => [
-          {
-            ...data.result,
-            timestamp: Date.now(),
-            roundNumber: prev.length + 1
-          },
-          ...prev
-        ].slice(0, 10)); // Keep only the last 10 rounds
-      }
+      const historyEntry = {
+        id: Date.now(),
+        dealer: data.dealer,
+        players: data.players,
+        results: data.result?.results || [],
+        timestamp: Date.now()
+      };
+      setGameHistory(prev => [historyEntry, ...prev].slice(0, 10));
       
       // Add system message
+      let resultMessage = 'Round ended. Check your results!';
+      if (data.result && data.result.results) {
+        const resultSummary = data.result.results
+          .map(r => `${r.username}: ${r.outcome} (${r.amountChange >= 0 ? '+' : ''}${r.amountChange})`)
+          .join(', ');
+        resultMessage = `Round ended. Results: ${resultSummary}`;
+      }
+      
       addMessage({
-        content: `Game ended. Results: ${data.result && data.result.results
-          ? data.result.results
-              .map(r => `${r.username}: ${r.outcome} (${r.amountChange >= 0 ? '+' : ''}${r.amountChange})`)
-              .join(', ')
-          : 'No results available'}`,
+        content: resultMessage,
         type: 'system',
         timestamp: Date.now()
       });
+      
+      // If host has auto-next round enabled, automatically start a new round immediately
+      if (autoSkipNewRound && socket.id === players[0]?.id) {
+        console.log("Auto next round enabled, starting new round immediately");
+        console.log("Current socket ID:", socket.id);
+        console.log("Host ID (players[0].id):", players[0]?.id);
+        console.log("autoSkipNewRound value:", autoSkipNewRound);
+        startNewRound();
+      } else {
+        console.log("Auto next round not triggered because:");
+        console.log("- autoSkipNewRound:", autoSkipNewRound);
+        console.log("- Is current player the host:", socket.id === players[0]?.id);
+        console.log("- Current socket ID:", socket.id);
+        console.log("- Host ID (players[0].id):", players[0]?.id);
+      }
     });
     
     socket.on('new_round', (data) => {
       if (!data) return;
       setGameState('betting');
       setPlayers(data.players || []);
-      setDealer({ cards: [], score: 0 });
+      setDealer(data.dealer || { cards: [], score: 0 });
       
+      // Add system message
+      // Only mention manual start if auto-skip is disabled
+      const manualStartMessage = data.isAutoSkip === false ? ' (Manual start by host)' : '';
       addMessage({
-        content: 'New round started. Place your bets!',
+        content: `New round started${manualStartMessage}. Place your bets!`,
         type: 'system',
         timestamp: Date.now()
       });
@@ -250,6 +289,28 @@ export const GameProvider = ({ children }) => {
       });
     });
     
+    // Handle player spectating event
+    socket.on('player_spectating', (data) => {
+      if (!data) return;
+      
+      // Update the player's status in the players array
+      setPlayers(prev => 
+        prev.map(player => 
+          player.id === data.playerId 
+            ? { ...player, status: 'spectating' } 
+            : player
+        )
+      );
+      
+      addMessage({
+        content: `${data.username} is now spectating the game`,
+        type: 'system',
+        timestamp: Date.now()
+      });
+      
+      console.log(`Player ${data.username} is now spectating`);
+    });
+    
     return () => {
       socket.off('game_started');
       socket.off('betting_ended');
@@ -262,8 +323,9 @@ export const GameProvider = ({ children }) => {
       socket.off('message');
       socket.off('leaderboard_updated');
       socket.off('player_split');
+      socket.off('player_spectating');
     };
-  }, [socket]);
+  }, [socket, autoSkipNewRound, players]);
   
   // Game actions
   const createRoom = (username, initialBalance = 1000) => {
@@ -292,6 +354,7 @@ export const GameProvider = ({ children }) => {
     if (!connected || !roomId) return;
     
     socket.emit('place_bet', { roomId, amount });
+    setLastBet(amount);
   };
   
   const hit = () => {
@@ -359,12 +422,6 @@ export const GameProvider = ({ children }) => {
     }
   };
   
-  const startNewRound = () => {
-    if (!connected || !roomId) return;
-    
-    socket.emit('new_round', { roomId });
-  };
-  
   const sendMessage = (message) => {
     if (!connected || !roomId) return;
     
@@ -418,6 +475,11 @@ export const GameProvider = ({ children }) => {
     return player;
   };
   
+  // Toggle hints
+  const toggleHints = () => {
+    setHintsEnabled(prev => !prev);
+  };
+
   return (
     <GameContext.Provider
       value={{
@@ -433,6 +495,9 @@ export const GameProvider = ({ children }) => {
         error,
         gameHistory,
         leaderboard,
+        lastBet,
+        hintsEnabled,
+        autoSkipNewRound,
         createRoom,
         joinRoom,
         startGame,
@@ -446,7 +511,9 @@ export const GameProvider = ({ children }) => {
         sendMessage,
         leaveRoom,
         isPlayerTurn,
-        getCurrentPlayer
+        getCurrentPlayer,
+        toggleHints,
+        setAutoSkipNewRound
       }}
     >
       {children}

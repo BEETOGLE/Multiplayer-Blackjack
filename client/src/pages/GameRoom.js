@@ -180,11 +180,79 @@ const ErrorMessage = styled.div`
   box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
 `;
 
+const HeaderControls = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 15px;
+`;
+
+const ToggleButton = styled.button`
+  background-color: ${props => props.$active ? '#4caf50' : '#f44336'};
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.2s;
+  
+  &:hover {
+    opacity: 0.9;
+  }
+`;
+
+const NewRoundButton = styled(StartGameButton)`
+  background-color: #9c27b0;
+  font-size: 22px;
+  padding: 18px 35px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+`;
+
+const ButtonIcon = styled.span`
+  font-size: 24px;
+`;
+
+// Add new styled components for spectators
+const SpectatorsContainer = styled.div`
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background-color: rgba(0, 0, 0, 0.7);
+  border-radius: 5px;
+  padding: 8px 12px;
+  max-width: 200px;
+`;
+
+const SpectatorsTitle = styled.div`
+  font-size: 14px;
+  color: #e5c687;
+  margin-bottom: 5px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+`;
+
+const SpectatorsList = styled.div`
+  font-size: 12px;
+  color: #bbb;
+`;
+
+const SpectatorItem = styled.div`
+  margin: 2px 0;
+`;
+
 const GameRoom = () => {
   const navigate = useNavigate();
   const { 
     connected, roomId, players, dealer, gameState, error,
-    startGame, leaveRoom, getCurrentPlayer, isPlayerTurn, currentTurn
+    startGame, leaveRoom, getCurrentPlayer, isPlayerTurn, currentTurn,
+    hintsEnabled, toggleHints, autoSkipNewRound, setAutoSkipNewRound,
+    startNewRound
   } = useGame();
   
   // Redirect if not connected or no room joined
@@ -206,9 +274,31 @@ const GameRoom = () => {
   // Check if user is the host (first player)
   const isHost = players.length > 0 && currentPlayer?.id === players[0]?.id;
   
+  // Debug log for host status
+  if (isHost) {
+    console.log(`Host status: balance=${currentPlayer?.balance}, status=${currentPlayer?.status}, spectating=${currentPlayer?.status === 'spectating' || (gameState === 'betting' && currentPlayer?.balance <= 0)}`);
+  }
+  
+  // Handler for auto-skip toggle
+  const handleAutoSkipToggle = () => {
+    setAutoSkipNewRound(!autoSkipNewRound);
+  };
+  
   // Render player seats based on number of players
   const renderPlayerSeats = () => {
-    return players.map((player, index) => {
+    // Filter out spectators (including the host if they're spectating)
+    const activePlayers = players.filter(player => {
+      // During betting phase, filter out players with zero balance
+      if (gameState === 'betting' && player.balance <= 0) return false;
+      
+      // Filter out players with spectating status
+      return player.status !== 'spectating';
+    });
+    
+    console.log('Active players:', activePlayers.map(p => `${p.username} (status: ${p.status}, balance: ${p.balance}, isHost: ${p.id === players[0]?.id})`));
+    console.log('Spectators:', getSpectators().map(p => `${p.username} (isHost: ${p.id === players[0]?.id})`));
+    
+    return activePlayers.map((player, index) => {
       // Check if this is the current player or a split hand of the current player
       const isMainPlayer = player.id === currentPlayer?.id;
       const isSplitHandOfCurrentPlayer = player.originalPlayer === currentPlayer?.id;
@@ -227,6 +317,25 @@ const GameRoom = () => {
     });
   };
   
+  // Add a function to get spectators
+  const getSpectators = () => {
+    // Get players who are either marked as spectating or have zero balance during betting phase
+    const spectators = players.filter(player => {
+      // Include players with spectating status
+      if (player.status === 'spectating') return true;
+      
+      // During betting phase, also include players with zero balance
+      if (gameState === 'betting' && player.balance <= 0) return true;
+      
+      return false;
+    });
+    
+    // Debug log for spectators
+    console.log('Spectators list:', spectators.map(p => `${p.username} (isHost: ${p.id === players[0]?.id}, balance: ${p.balance}, status: ${p.status})`));
+    
+    return spectators;
+  };
+  
   // Render appropriate controls based on game state
   const renderControls = () => {
     // Get the current player (either main hand or split hand based on whose turn it is)
@@ -242,8 +351,8 @@ const GameRoom = () => {
       !activePlayer.id.includes('-split'); // Can't split a split hand
     
     if (gameState === 'betting') {
-      // Don't show betting panel for players with zero balance
-      if (currentPlayer?.balance <= 0) {
+      // Don't show betting panel for players with zero balance or spectating status
+      if (currentPlayer?.balance <= 0 || currentPlayer?.status === 'spectating') {
         return (
           <div style={{ 
             textAlign: 'center', 
@@ -268,8 +377,11 @@ const GameRoom = () => {
       />;
     } else if (gameState === 'playing' && isPlayerTurn() && !hasBlackjack) {
       return <PlayerControls currentPlayer={activePlayer} canSplit={canSplit} />;
-    } else if (gameState === 'ended') {
-      return <PlayerControls currentPlayer={currentPlayer} canSplit={false} />;
+    } else if (gameState === 'ended' && isHost && currentPlayer?.balance > 0 && currentPlayer?.status !== 'spectating') {
+      return <NewRoundButton onClick={startNewRound}>
+        <ButtonIcon>🔄</ButtonIcon>
+        Start New Round
+      </NewRoundButton>;
     }
     
     // If it's not the player's turn or they have blackjack, don't show controls
@@ -292,7 +404,29 @@ const GameRoom = () => {
           </PlayerCount>
         </RoomInfo>
         
-        <LeaveButton onClick={handleLeaveRoom}>Leave Table</LeaveButton>
+        <HeaderControls>
+          {isHost && (
+            <ToggleButton 
+              $active={autoSkipNewRound} 
+              onClick={handleAutoSkipToggle}
+              title={autoSkipNewRound ? "Auto Next Round" : "Manual Next Round"}
+            >
+              <span role="img" aria-label="auto-next">🔄</span>
+              {autoSkipNewRound ? "Auto Next Round: On" : "Auto Next Round: Off"}
+            </ToggleButton>
+          )}
+          
+          <ToggleButton 
+            $active={hintsEnabled} 
+            onClick={toggleHints}
+            title={hintsEnabled ? "Disable strategy hints" : "Enable strategy hints"}
+          >
+            <span role="img" aria-label="hint">💡</span>
+            {hintsEnabled ? "Strategy Help: On" : "Strategy Help: Off"}
+          </ToggleButton>
+          
+          <LeaveButton onClick={handleLeaveRoom}>Leave Table</LeaveButton>
+        </HeaderControls>
       </GameHeader>
       
       <GameContent>
@@ -328,6 +462,22 @@ const GameRoom = () => {
                 </WaitingMessage>
               )}
             </>
+          )}
+          
+          {/* Add spectator list */}
+          {getSpectators().length > 0 && (
+            <SpectatorsContainer>
+              <SpectatorsTitle>
+                <span role="img" aria-label="spectators">👁️</span> Spectators
+              </SpectatorsTitle>
+              <SpectatorsList>
+                {getSpectators().map(spectator => (
+                  <SpectatorItem key={spectator.id}>
+                    {spectator.username}
+                  </SpectatorItem>
+                ))}
+              </SpectatorsList>
+            </SpectatorsContainer>
           )}
         </GameTable>
         

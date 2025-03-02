@@ -93,7 +93,8 @@ io.on('connection', (socket) => {
         cards: [],
         bet: 0,
         status: null,
-        score: 0
+        score: 0,
+        hasCrown: false
       }],
       dealer: {
         cards: [],
@@ -546,13 +547,36 @@ io.on('connection', (socket) => {
   
   // Start a new round
   socket.on('new_round', ({ roomId }) => {
-    if (!rooms[roomId] || rooms[roomId].gameState !== 'ended') return;
+    console.log(`Received new_round event for room ${roomId} from socket ${socket.id}`);
+    
+    if (!rooms[roomId]) {
+      console.log(`Room ${roomId} not found for new_round event`);
+      return;
+    }
+    
+    if (rooms[roomId].gameState !== 'ended') {
+      console.log(`Cannot start new round in room ${roomId} - game state is ${rooms[roomId].gameState}`);
+      return;
+    }
+    
+    // Check if the request is from the host (first player)
+    const isHost = rooms[roomId].players.length > 0 && rooms[roomId].players[0].id === socket.id;
+    console.log(`New round requested by ${socket.id}, isHost: ${isHost}, first player: ${rooms[roomId].players[0]?.id}`);
+    
+    // Check if the host has zero balance
+    const hostHasZeroBalance = rooms[roomId].players.length > 0 && 
+                              rooms[roomId].players[0].balance <= 0;
+    
+    if (hostHasZeroBalance) {
+      console.log(`Host ${rooms[roomId].players[0].username} has zero balance and will be marked as spectating`);
+    }
     
     // Reset game state
     rooms[roomId].deck = shuffleDeck(createDeck());
     rooms[roomId].dealer = {
       cards: [],
-      score: 0
+      score: 0,
+      status: null
     };
     
     // Reset player cards, bets, status
@@ -564,10 +588,27 @@ io.on('connection', (socket) => {
         continue;
       }
       
-      rooms[roomId].players[i].cards = [];
-      rooms[roomId].players[i].bet = 0;
-      rooms[roomId].players[i].status = null; // Reset status including 'spectating'
-      rooms[roomId].players[i].score = 0;
+      // Mark players with zero balance as spectators
+      if (rooms[roomId].players[i].balance <= 0) {
+        rooms[roomId].players[i].status = 'spectating';
+        rooms[roomId].players[i].cards = [];
+        rooms[roomId].players[i].bet = 0;
+        rooms[roomId].players[i].score = 0;
+        
+        // Emit an event to notify all clients that this player is spectating
+        io.to(roomId).emit('player_spectating', {
+          playerId: rooms[roomId].players[i].id,
+          username: rooms[roomId].players[i].username
+        });
+        
+        console.log(`Player ${rooms[roomId].players[i].username} is spectating due to zero balance (isHost: ${rooms[roomId].players[i].id === rooms[roomId].players[0]?.id})`);
+      } else {
+        // Reset active players
+        rooms[roomId].players[i].cards = [];
+        rooms[roomId].players[i].bet = 0;
+        rooms[roomId].players[i].status = null; // Reset status
+        rooms[roomId].players[i].score = 0;
+      }
     }
     
     // Update game state
@@ -576,8 +617,14 @@ io.on('connection', (socket) => {
     
     // Emit new round event
     io.to(roomId).emit('new_round', {
-      players: rooms[roomId].players
+      players: rooms[roomId].players,
+      gameState: 'betting',
+      dealer: rooms[roomId].dealer,
+      isAutoSkip: true // Always set to true when triggered by the host
     });
+    
+    // Log the new round
+    console.log(`New round started in room ${roomId}, auto-skip: true`);
   });
   
   // Send chat message
@@ -641,10 +688,19 @@ function dealInitialCards(roomId) {
   for (let i = 0; i < rooms[roomId].players.length; i++) {
     const player = rooms[roomId].players[i];
     
-    // Skip players with zero balance who didn't place a bet
+    // Skip players who didn't place a bet (only mark as spectating if they have no bet)
     if (player.bet === 0) {
       player.status = 'spectating';
+      player.cards = []; // Ensure spectators have no cards
+      player.score = 0;
       rooms[roomId].players[i] = player;
+      
+      // Emit an event to notify all clients that this player is spectating
+      io.to(roomId).emit('player_spectating', {
+        playerId: player.id,
+        username: player.username
+      });
+      
       continue;
     }
     
@@ -827,6 +883,15 @@ function dealerTurn(roomId) {
     });
   }
   
+  // Set dealer status
+  if (rooms[roomId].dealer.score > 21) {
+    rooms[roomId].dealer.status = 'bust';
+  } else if (isBlackjack(rooms[roomId].dealer.cards)) {
+    rooms[roomId].dealer.status = 'blackjack';
+  } else {
+    rooms[roomId].dealer.status = 'stood';
+  }
+  
   // Determine winners and settle bets
   settleGame(roomId);
 }
@@ -835,102 +900,109 @@ function dealerTurn(roomId) {
 function settleGame(roomId) {
   if (!rooms[roomId]) return;
   
-  const dealerScore = rooms[roomId].dealer.score;
-  const dealerHasBlackjack = isBlackjack(rooms[roomId].dealer.cards);
-  const dealerBusted = dealerScore > 21;
+  const room = rooms[roomId];
+  const dealer = room.dealer;
+  const dealerScore = dealer.score;
+  const dealerHasBlackjack = isBlackjack(dealer.cards);
   
+  // Calculate results for each player
   const results = [];
   
-  // Determine result for each player
-  for (let i = 0; i < rooms[roomId].players.length; i++) {
-    const player = rooms[roomId].players[i];
+  for (const player of room.players) {
+    // Skip split hands for results calculation (they're handled with their original player)
+    if (player.originalPlayer) continue;
+    
     let outcome = '';
     let amountChange = 0;
     
-    // Skip players who surrendered
-    if (player.status === 'surrendered') {
-      outcome = 'lose';
-      amountChange = -player.bet;
-    } 
-    // Player has blackjack
-    else if (player.status === 'blackjack') {
+    // Skip players who were spectating this round
+    if (player.status === 'spectating') {
+      outcome = 'spectating';
+      results.push({
+        playerId: player.id,
+        username: player.username,
+        outcome,
+        amountChange
+      });
+      continue;
+    }
+    
+    // Handle different outcomes
+    if (player.status === 'blackjack') {
       if (dealerHasBlackjack) {
-        // Push (tie) if dealer also has blackjack
         outcome = 'push';
         amountChange = 0;
-        player.balance += player.bet;
       } else {
-        // Blackjack pays 3:2
         outcome = 'blackjack';
-        amountChange = player.bet * 1.5;
-        player.balance += player.bet * 2.5;
+        amountChange = Math.floor(player.bet * 1.5);
+        player.balance += player.bet + amountChange;
       }
-    } 
-    // Player busted
-    else if (player.status === 'busted') {
+    } else if (player.status === 'bust') {
+      outcome = 'bust';
+      amountChange = -player.bet;
+      // Balance already deducted when betting
+    } else if (player.status === 'surrender') {
+      outcome = 'surrender';
+      amountChange = -Math.floor(player.bet / 2);
+      player.balance += Math.floor(player.bet / 2); // Return half the bet
+    } else if (dealerHasBlackjack) {
       outcome = 'lose';
       amountChange = -player.bet;
-    } 
-    // Dealer busted and player didn't
-    else if (dealerBusted) {
+      // Balance already deducted when betting
+    } else if (dealer.status === 'bust') {
       outcome = 'win';
       amountChange = player.bet;
-      player.balance += player.bet * 2;
-    } 
-    // Compare scores
-    else {
-      if (player.score > dealerScore) {
-        outcome = 'win';
-        amountChange = player.bet;
-        player.balance += player.bet * 2;
-      } else if (player.score < dealerScore) {
-        outcome = 'lose';
-        amountChange = -player.bet;
-      } else {
-        outcome = 'push';
-        amountChange = 0;
-        player.balance += player.bet;
-      }
-    }
-    
-    // For split hands, update the original player's balance
-    if (player.originalPlayer) {
-      const originalPlayerIndex = rooms[roomId].players.findIndex(p => p.id === player.originalPlayer);
-      if (originalPlayerIndex !== -1) {
-        rooms[roomId].players[originalPlayerIndex].balance = player.balance;
-      }
+      player.balance += player.bet * 2; // Original bet + winnings
+    } else if (player.score > dealerScore) {
+      outcome = 'win';
+      amountChange = player.bet;
+      player.balance += player.bet * 2; // Original bet + winnings
+    } else if (player.score < dealerScore) {
+      outcome = 'lose';
+      amountChange = -player.bet;
+      // Balance already deducted when betting
     } else {
-      // Update player balance in leaderboard
-      updateLeaderboard(player);
+      outcome = 'push';
+      amountChange = 0;
+      player.balance += player.bet; // Return the original bet
     }
     
-    // Add result to results array
+    // Add to results
     results.push({
+      playerId: player.id,
       username: player.username,
       outcome,
       amountChange
     });
     
-    // Update player in room
-    rooms[roomId].players[i] = player;
+    // Update leaderboard
+    updateLeaderboard(player);
+    
+    // Mark players with zero balance as spectators for the next round
+    if (player.balance <= 0) {
+      player.status = 'spectating';
+      console.log(`Player ${player.username} marked as spectator due to zero balance (isHost: ${player.id === room.players[0]?.id})`);
+      
+      // If this is the host, make sure they're properly marked as spectating
+      if (player.id === room.players[0]?.id) {
+        console.log(`Host ${player.username} has zero balance and is marked as spectating`);
+      }
+    }
   }
   
   // Update game state
-  rooms[roomId].gameState = 'ended';
+  room.gameState = 'ended';
+  room.currentTurn = null;
   
-  // Emit game ended event
+  // Emit game ended event with results
   io.to(roomId).emit('game_ended', {
-    dealer: rooms[roomId].dealer,
-    players: rooms[roomId].players,
+    dealer,
+    players: room.players,
     result: {
-      results,
-      timestamp: Date.now()
+      dealerScore,
+      dealerHasBlackjack,
+      results
     }
-  });
-  
-  // Emit updated leaderboard
-  io.emit('leaderboard_updated', {
-    leaderboard: leaderboard.slice(0, 10)
   });
 }
 
@@ -939,8 +1011,10 @@ function updateLeaderboard(player) {
   const existingIndex = leaderboard.findIndex(p => p.id === player.id);
   
   if (existingIndex !== -1) {
-    // Update existing player
-    leaderboard[existingIndex].balance = player.balance;
+    // Update existing player only if new balance is higher
+    if (player.balance > leaderboard[existingIndex].balance) {
+      leaderboard[existingIndex].balance = player.balance;
+    }
   } else {
     // Add new player
     leaderboard.push({
